@@ -25,7 +25,7 @@ class ReportGenerator:
         self.h2_style = ParagraphStyle('CustomH2', parent=self.styles['Heading2'], fontSize=14, textColor=blue, spaceBefore=10, spaceAfter=4)
         self.h3_style = ParagraphStyle('CustomH3', parent=self.styles['Heading3'], fontSize=12, textColor=black, spaceBefore=8, spaceAfter=4)
         self.body_style = self.styles['BodyText']
-        self.bullet_style = ParagraphStyle('Bullet', parent=self.body_style, firstLineIndent=0, leftIndent=18, spaceBefore=2, spaceAfter=2)
+        self.bullet_style = ParagraphStyle('Bullet', parent=self.body_style, firstLineIndent=0, leftIndent=18, spaceBefore=2, spaceAfter=4)
         self.italic_style = self.styles['Italic']
         self.normal_style = self.styles['Normal']
 
@@ -171,11 +171,9 @@ class ReportGenerator:
 
         if 'risks_summary' in op_data:
             self.story.append(Paragraph("Key Risks Summary", self.h2_style))
-            for risk in op_data['risks_summary'].split('• '):
-                if risk.strip(): self.story.append(Paragraph(f"• {risk.strip()}", self.bullet_style))
-                cleaned_risk = risk.strip().replace('\n', ' ')
-                if cleaned_risk:
-                    self.story.append(Paragraph(f"• {cleaned_risk}", self.bullet_style))
+            for risk in op_data['risks_summary'].split('\n\n'):
+                if risk.strip():
+                    self.story.append(Paragraph(risk.strip(), self.bullet_style))
             self.story.append(Spacer(1, 12))
 
         if 'geo_summary' in op_data and not op_data['geo_summary'].empty:
@@ -186,8 +184,35 @@ class ReportGenerator:
 
         if 'mda_summary' in op_data:
             self.story.append(Paragraph("Management Discussion & Analysis", self.h2_style))
-            mda_text = op_data['mda_summary'].replace('\n', '<br/>')
-            self.story.append(Paragraph(mda_text, self.body_style))
+            
+            full_mda_text = op_data['mda_summary'].strip()
+            
+            # Use regex to find all sub-headers and their content blocks
+            import re
+            header_pattern = re.compile(r'--- (.*?) ---')
+            matches = list(header_pattern.finditer(full_mda_text))
+
+            if not matches:
+                # Fallback if no headers are found (should not happen with current synthesize_mda)
+                self.story.append(Paragraph(full_mda_text.replace('\n', '<br/>'), self.body_style))
+            else:
+                for i, match in enumerate(matches):
+                    header_text = match.group(1).strip()
+                    
+                    # Determine the start and end of the content block for this header
+                    content_start = match.end() + 1 # +1 to skip the newline after the header
+                    content_end = matches[i+1].start() if i+1 < len(matches) else len(full_mda_text)
+                    
+                    content_block = full_mda_text[content_start:content_end].strip()
+
+                    # Add the sub-header
+                    self.story.append(Paragraph(header_text, self.h3_style))
+                    
+                    # Add the bullet points for this sub-section
+                    for bullet_point in content_block.split('\n\n'):
+                        if bullet_point.strip():
+                            self.story.append(Paragraph(bullet_point.strip(), self.bullet_style))
+            
             self.story.append(Spacer(1, 12))
 
         self.story.append(PageBreak())
@@ -198,8 +223,8 @@ class ReportGenerator:
 
         if 'covenants' in debt_data:
             self.story.append(Paragraph("Debt Covenants", self.h2_style))
-            for cov in debt_data['covenants'].split('• '):
-                if cov.strip(): self.story.append(Paragraph(f"• {cov.strip()}", self.bullet_style))
+            for cov in debt_data['covenants'].split('\n\n'):
+                if cov.strip(): self.story.append(Paragraph(cov.strip(), self.bullet_style))
             self.story.append(Spacer(1, 12))
 
         if 'capital_structure' in debt_data and not debt_data['capital_structure'].empty:
@@ -220,12 +245,12 @@ class ReportGenerator:
 
         if 'regulatory_summary' in legal_data:
             self.story.append(Paragraph("Regulatory Matters", self.h2_style))
-            for matter in legal_data['regulatory_summary'].split('• '):
-                if matter.strip(): self.story.append(Paragraph(f"• {matter.strip()}", self.bullet_style))
+            for matter in legal_data['regulatory_summary'].split('\n\n'):
+                if matter.strip(): self.story.append(Paragraph(matter.strip(), self.bullet_style))
             self.story.append(Spacer(1, 12))
 
         if 'governance_summary' in legal_data:
             self.story.append(Paragraph("Corporate Governance Commentary", self.h2_style))
-            for comment in legal_data['governance_summary'].split('• '):
-                if comment.strip(): self.story.append(Paragraph(f"• {comment.strip()}", self.bullet_style))
+            for comment in legal_data['governance_summary'].split('\n\n'):
+                if comment.strip(): self.story.append(Paragraph(comment.strip(), self.bullet_style))
             self.story.append(Spacer(1, 12))
