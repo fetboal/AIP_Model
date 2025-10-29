@@ -1,0 +1,12 @@
+# .gitignore
+
+# Ignore environment variables file
+.env
+
+# Ignore Python cache files
+__pycache__/
+*.pyc
+
+# Ignore generated reports and data
+*.pdf
+*.pkl.gz
