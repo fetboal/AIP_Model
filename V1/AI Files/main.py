@@ -24,12 +24,17 @@ import os
 #Import Open AI
 from openai import OpenAI
 
-# Load environment variables from .env file
-load_dotenv()
+# --- Project Root Setup ---
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+
+# --- Load Environment Variables ---
+# Explicitly load the .env file from the project root
+dotenv_path = os.path.join(PROJECT_ROOT, '.env')
+load_dotenv(dotenv_path=dotenv_path)
 
 def initialize_app():
     """Initializes the application by setting up the environment and OpenAI client."""
-    if not os.path.exists(".env"):
+    if not os.path.exists(dotenv_path):
         print("Warning: .env file not found. Please create one with your OPENAI_API_KEY.")
         return None, None
 
@@ -38,7 +43,7 @@ def initialize_app():
         raise ValueError("OPENAI_API_KEY environment variable not set.")
     client = OpenAI(api_key=api_key)
 
-    output_pdf_dir = os.path.join(os.getcwd(), "generated PDFS")
+    output_pdf_dir = os.path.join(PROJECT_ROOT, "generated PDFS")
     os.makedirs(output_pdf_dir, exist_ok=True)
     
     return client, output_pdf_dir
@@ -222,7 +227,7 @@ def run_analysis_pipeline(analysis_types: list, financial_segments: list = None,
 def main():
     """Main function to run the entire PDF analysis pipeline."""
     # --- Configuration ---
-    PDF_PATH = r"C:\Users\frank\Code\AIP_Model\PPG_10K_2024.pdf"
+    PDF_PATH = os.path.join(PROJECT_ROOT, "PPG_10K_2024.pdf")
     IS_TESTING = True # Set to False to run on all pages in classification mode
 
     # --- Mode Selection ---

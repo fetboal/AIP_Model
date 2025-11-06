@@ -3,6 +3,9 @@ import gzip
 import os
 from datetime import datetime
 
+# --- Project Root Setup ---
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+
 def save_classification_data(page_classifications, raw_responses, filename="classifications.pkl.gz"):
     """
     Save classification data as compressed pickle file in the project directory.
@@ -15,8 +18,8 @@ def save_classification_data(page_classifications, raw_responses, filename="clas
     Returns:
         str: Path to saved pickle file
     """
-    # Save in the current working directory (project folder)
-    pickle_path = os.path.join(os.getcwd(), filename)
+    # Save in the project root directory (e.g., 'Version One')
+    pickle_path = os.path.join(PROJECT_ROOT, filename)
     
     # Prepare data for saving
     save_data = {
@@ -51,8 +54,8 @@ def load_classification_data(filename="classifications.pkl.gz"):
     Returns:
         tuple: (page_classifications, raw_responses, metadata)
     """
-    # Load from the current working directory (project folder)
-    pickle_path = os.path.join(os.getcwd(), filename)
+    # Load from the project root directory (e.g., 'Version One')
+    pickle_path = os.path.join(PROJECT_ROOT, filename)
     
     try:
         with gzip.open(pickle_path, 'rb') as f:
@@ -63,4 +66,3 @@ def load_classification_data(filename="classifications.pkl.gz"):
         raise FileNotFoundError(f"Classification data file not found: {pickle_path}")
     except (pickle.PickleError, gzip.BadGzipFile) as e:
         raise Exception(f"Error loading pickle file: {e}")
-
