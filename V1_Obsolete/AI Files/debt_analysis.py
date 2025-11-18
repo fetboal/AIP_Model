@@ -1,6 +1,7 @@
 import pandas as pd
+from typing import Any
 
-def _format_covenant_text(text: any) -> str:
+def _format_covenant_text(text: Any) -> str:
     """
     Formats covenant text, handling strings, lists of strings, and lists of dictionaries.
     """
@@ -120,7 +121,10 @@ if __name__ == "__main__":
         _, categorized_dfs = create_analysis_dataframes(page_classifications)
 
         # Run the debt analysis
-        run_debt_analysis(categorized_dfs, print_to_console=True)
+        if categorized_dfs is not None:
+            run_debt_analysis(categorized_dfs, print_to_console=True)
+        else:
+            print("Error: Failed to create categorized DataFrames.")
 
     except (FileNotFoundError, Exception) as e:
         print(f"Error: Could not load or process data. {e}")

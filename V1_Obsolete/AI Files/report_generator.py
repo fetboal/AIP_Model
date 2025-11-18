@@ -1,7 +1,7 @@
 from reportlab.lib.pagesizes import A4
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib.colors import black, blue, lightgrey, grey
+from reportlab.lib.colors import black, blue, lightgrey, grey, white
 from reportlab.lib.units import inch
 from reportlab.lib.enums import TA_CENTER, TA_LEFT
 from datetime import datetime
@@ -34,7 +34,7 @@ class ReportGenerator:
         if df is None or df.empty:
             return None
 
-        header_style = ParagraphStyle('ReportTableHeader', parent=self.normal_style, fontName='Helvetica-Bold', textColor='white', alignment=TA_CENTER)
+        header_style = ParagraphStyle('ReportTableHeader', parent=self.normal_style, fontName='Helvetica-Bold', textColor=white, alignment=TA_CENTER)
         cell_style = ParagraphStyle('ReportTableCell', parent=self.normal_style, alignment=TA_CENTER)
 
         df_reset = df.reset_index()
@@ -82,7 +82,7 @@ class ReportGenerator:
         total_pages = len(page_classifications)
         for category, count in category_stats.items():
             percentage = (count / total_pages) * 100
-            summary_data.append([category, str(count), f"{percentage:.1f}%"])
+            summary_data.append([str(category), str(count), f"{percentage:.1f}%"])
         
         summary_table = Table(summary_data, colWidths=[3*inch, 1*inch, 1*inch])
         summary_table.setStyle(TableStyle([

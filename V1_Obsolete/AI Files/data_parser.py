@@ -56,7 +56,8 @@ def get_schema_for_category(category: str) -> dict:
     # For 'Other', schema remains an empty dict {}
     
     # Add the common variable to all schemas. It will be a list to hold multiple segments if found.
-    schema["business_segment"] = []
+    #REMOVED BECAUSE ERROR
+    #schema["business_segment"] = []
     return schema
 
 def structure_ai_response_data(classification_response_text: str, schema_response_text: str = ""):

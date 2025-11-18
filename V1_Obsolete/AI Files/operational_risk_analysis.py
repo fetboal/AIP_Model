@@ -1,10 +1,11 @@
 import pandas as pd
 import numpy as np
+from typing import Optional
 from data_persistence import load_classification_data
 from financial_statement_analysis import create_analysis_dataframes
 
 
-def analyze_business_segments(op_risk_df: pd.DataFrame, segments_to_include: list = None) -> pd.DataFrame:
+def analyze_business_segments(op_risk_df: pd.DataFrame, segments_to_include: Optional[list] = None) -> pd.DataFrame:
     """
     Analyzes and summarizes business segment data from the operational and risk DataFrame.
 
@@ -38,7 +39,7 @@ def analyze_business_segments(op_risk_df: pd.DataFrame, segments_to_include: lis
             first_item = exploded.dropna().iloc[0]
             if isinstance(first_item, dict) and 'name' in first_item:
                 # Handle list of dictionaries
-                normalized = pd.json_normalize(exploded)
+                normalized = pd.json_normalize(exploded.tolist())
                 if 'name' in normalized.columns:
                     segments.extend(normalized['name'].dropna().tolist())
             else:
@@ -269,7 +270,10 @@ if __name__ == "__main__":
         main_df, categorized_dfs = create_analysis_dataframes(page_classifications)
 
         # Run the analysis using the new function
-        run_operational_risk_analysis(categorized_dfs, print_to_console=True)
+        if categorized_dfs is not None:
+            run_operational_risk_analysis(categorized_dfs, print_to_console=True)
+        else:
+            print("Error: Failed to create categorized DataFrames.")
 
     except (FileNotFoundError, Exception) as e:
         print(f"Error: Could not load or process data. {e}")

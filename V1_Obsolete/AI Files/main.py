@@ -10,8 +10,8 @@ from data_persistence import save_classification_data, load_classification_data
 from report_generator import ReportGenerator
 from utils import print_ai_response
 
-#Loading Enviornment Variable 
-from dotenv import load_dotenv
+# Loading Enviornment Variable
+import dotenv
 
 # Import the new analysis modules
 from financial_statement_analysis import create_analysis_dataframes, run_financial_statement_analysis
@@ -30,7 +30,7 @@ PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 # --- Load Environment Variables ---
 # Explicitly load the .env file from the project root
 dotenv_path = os.path.join(PROJECT_ROOT, '.env')
-load_dotenv(dotenv_path=dotenv_path)
+dotenv.load_dotenv(dotenv_path=dotenv_path)
 
 def initialize_app():
     """Initializes the application by setting up the environment and OpenAI client."""
@@ -178,7 +178,7 @@ def run_classification_pipeline(pdf_path: str, is_testing: bool):
     generate_artifacts(page_classifications, raw_responses, pdf_path, output_dir)
     print("\n--- Classification Pipeline Completed Successfully ---")
 
-def run_analysis_pipeline(analysis_types: list, financial_segments: list = None, print_to_console: bool = True):
+def run_analysis_pipeline(analysis_types: list, financial_segments: list | None = None, print_to_console: bool = True):
     """
     Loads processed data and runs the selected analysis modules.
     """
@@ -201,6 +201,10 @@ def run_analysis_pipeline(analysis_types: list, financial_segments: list = None,
 
     _, categorized_dfs = create_analysis_dataframes(page_classifications)
 
+    if categorized_dfs is None:
+        print("Error: Failed to create analysis dataframes.")
+        return
+
     if 'financial' in analysis_types:
         analysis_results['financial'] = run_financial_statement_analysis(page_classifications, target_segments=financial_segments, print_to_console=print_to_console)
     if 'operational' in analysis_types:
@@ -216,6 +220,9 @@ def run_analysis_pipeline(analysis_types: list, financial_segments: list = None,
     if analysis_results:
         print("\n--- Generating Analysis Report PDF ---")
         _, output_dir = initialize_app() # Get output directory
+        if output_dir is None:
+            print("Error: Failed to initialize output directory. Skipping report generation.")
+            return
         report_filename = "PPG_Analysis.pdf"
         report_path = os.path.join(output_dir, report_filename)
         analysis_reporter = ReportGenerator(report_path)

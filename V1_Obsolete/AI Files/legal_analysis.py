@@ -1,7 +1,8 @@
 import pandas as pd
 import json
+from typing import Any
 
-def _format_item_as_string(item: any) -> str:
+def _format_item_as_string(item: Any) -> str:
     """
     Recursively formats an item (string, dict, list) into a readable string.
     - Dictionaries are formatted as "Key: Value".
@@ -171,7 +172,10 @@ if __name__ == "__main__":
         _, categorized_dfs = create_analysis_dataframes(page_classifications)
 
         # Run the full analysis
-        run_legal_analysis(categorized_dfs, print_to_console=True)
+        if categorized_dfs is not None:
+            run_legal_analysis(categorized_dfs, print_to_console=True)
+        else:
+            print("Error: categorized_dfs is None, cannot run legal analysis.")
 
     except (FileNotFoundError, Exception) as e:
         print(f"Error: Could not load or process data. {e}")

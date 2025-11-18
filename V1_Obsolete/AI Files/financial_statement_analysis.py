@@ -3,6 +3,7 @@ from data_persistence import load_classification_data
 import pprint
 import os
 import numpy as np
+from typing import Optional
 
 def create_analysis_dataframes(page_classifications: dict):
     """
@@ -71,7 +72,7 @@ def _convert_value_with_unit(value, unit):
     # Add more unit conversions as needed (e.g., percentage, currency symbols)
     return value
 
-def reconstruct_financial_statements(page_classifications: dict, segments_to_include: list = None) -> dict:
+def reconstruct_financial_statements(page_classifications: dict, segments_to_include: Optional[list] = None) -> dict:
     """
     Reconstructs simplified Income Statements, Balance Sheets, and Cash Flow Statements
     from the extracted financial data.
@@ -156,7 +157,7 @@ def reconstruct_financial_statements(page_classifications: dict, segments_to_inc
         
     return reconstructed_statements
 
-def calculate_financial_ratios(reconstructed_statements: dict, segments_to_include: list = None) -> dict:
+def calculate_financial_ratios(reconstructed_statements: dict, segments_to_include: Optional[list] = None) -> dict:
     """
     Calculates key financial ratios from reconstructed financial statements.
 
@@ -250,7 +251,7 @@ def calculate_financial_ratios(reconstructed_statements: dict, segments_to_inclu
 
         # --- Efficiency Ratios ---
         # Inventory Turnover: COGS / Inventory (using current year's inventory for simplicity)
-        inventory_turnover = (cogs / inventory) if inventory != 0 and not pd.isna(cogs) else np.nan
+        inventory_turnover = (cogs / inventory) if inventory != 0 and not pd.isna(cogs) and not pd.isna(inventory) else np.nan
         # Accounts Receivable Turnover: Net Sales / Accounts Receivable (using current year's AR for simplicity)
         ar_turnover = (net_sales / accounts_receivable) if accounts_receivable != 0 and not pd.isna(net_sales) else np.nan
         # Asset Turnover: Net Sales / Total Assets (using current year's total assets for simplicity)
@@ -321,7 +322,7 @@ def perform_trend_analysis(data_df: pd.DataFrame, name: str = "Financial Item", 
     print(f"\nTrend analysis for {name} complete.")
     return trend_results
 
-def perform_cash_flow_analysis(reconstructed_statements: dict, segments_to_include: list = None) -> pd.DataFrame:
+def perform_cash_flow_analysis(reconstructed_statements: dict, segments_to_include: Optional[list] = None) -> pd.DataFrame:
     """
     Analyzes the company's sources and uses of cash from the Cash Flow Statement.
 
@@ -415,7 +416,7 @@ def print_cash_flow_summary(cash_flow_df: pd.DataFrame, print_to_console: bool =
         else:
             print("\nNo cash flow analysis performed.")
 
-def run_financial_statement_analysis(page_classifications: dict, target_segments: list = None, print_to_console: bool = True) -> dict:
+def run_financial_statement_analysis(page_classifications: dict, target_segments: Optional[list] = None, print_to_console: bool = True) -> dict:
     """
     Runs a full financial analysis pipeline and prints the results to the console.
 

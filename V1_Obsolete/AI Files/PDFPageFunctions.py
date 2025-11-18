@@ -1,6 +1,6 @@
 from PyPDF2 import PdfReader, PdfWriter
 from io import BytesIO
-from typing import List
+from typing import List, Optional
 import os
 import tempfile
 import subprocess
@@ -117,7 +117,7 @@ def split_pdf_to_pages(pdf_path: str) -> List[BytesIO]:
         print(f"Error writing combined PDF: {e}")
         raise
 
-def extract_pages_from_original(original_pdf_path: str, page_indices: List[int], output_path: str = None, open_pdf: bool = False) -> str:
+def extract_pages_from_original(original_pdf_path: str, page_indices: List[int], output_path: Optional[str] = None, open_pdf: bool = False) -> str:
     """
     Extract specific pages from the original PDF file and create a new PDF.
     
