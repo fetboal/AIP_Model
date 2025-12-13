@@ -3,6 +3,14 @@ import pandas as pd
 import requests
 import io
 
+# Statement keywords for dynamic matching
+statement_keywords = {
+    'Income Statement': ['income'],
+    'Balance Sheet': ['balance sheet'],
+    'Cash Flow Statement': ['cash'],
+    'Equity Statement': ['equity'],
+}
+
 class EdgarCompany:
     """
     A client to interact with the SEC EDGAR database for a specific company.
@@ -24,25 +32,26 @@ class EdgarCompany:
         self.company = edgar.Company(ticker)
         self.ticker = ticker
 
-    def get_filing(self, filing_type: str, index: int):
-        """Retrieves a specific filing for the company.
+    def get_multiple_filings(self, filing_type: str, count: int):
+        """
+        Gets multiple filings of a specified type for the company. 
 
-        This method fetches all filings of a specified type for the company and
-        then returns a single filing based on the provided index.
+        Count specifies how many filings to retrieve. returns a list of filing objects.
 
         Args:
-            filing_type (str): The form type of the filing to retrieve (e.g., '10-K', '10-Q').
-            index (int): The index of the filing to return. 0 is the most recent,
-                         1 is the second most recent, and so on.
+            filing_type (str): The form type of the filings to retrieve (e.g., '10-K', '10-Q').
+            count (int): The number of filings to retrieve.
 
         Returns:
-            A single filing object corresponding to the specified type and index.
-            The specific type is `edgar.Filing`.
+            list: List of filing objects corresponding to the specified type and count.
         """
+
         filings = self.company.get_filings(form=filing_type)
-        indexed_filing = filings[index]
-        return indexed_filing
-    
+        result = []
+        for i in range(count):
+            result.append(filings[i])
+        return result   
+
     def get_item_by_part(self, filing_object, part: str, item: str):
         """Retrieves a specific part of a filing.
 
@@ -72,24 +81,46 @@ class EdgarFinancials(EdgarCompany):
     Inherits from EdgarCompany to access company information, filings, and item parts.
     """
     
-    def get_statements_pages(self, filing):
-        """Retrieves financial statement pages from a filing (note not filing objects).
-
+    def find_statement_indices_by_keywords(self, filing, statement_types):
+        """Find statement indices dynamically using keyword matching.
+        
         Args:
-            filing: The filing object from which to extract the financial statements.
-
+            filing: The filing object from which to find statements.
+            statement_types (list): List of statement type keys (e.g., ['Income Statement', 'Balance Sheet']).
+        
         Returns:
-            array of pages for statements
+            dict: Dictionary mapping statement types to their indices in the filing.
         """
-        statement_pages = []
-
         all_reports = filing.reports
-
-        for i,report in enumerate(all_reports):
-            if report.menu_category == 'Statements':
-                statement_pages.append(i)
+        reports_df = all_reports.to_pandas()
+        
+        # Filter to only statements
+        statements_df = reports_df[reports_df['MenuCategory'] == 'Statements'].copy()
+        
+        statement_indices = {}
+        
+        for statement_type in statement_types:
+            if statement_type not in statement_keywords:
+                print(f"Warning: No keywords defined for '{statement_type}'")
+                continue
                 
-        return statement_pages
+            keywords = statement_keywords[statement_type]
+            
+            # Search for matching statements
+            for idx, row in statements_df.iterrows():
+                shortname = row['ShortName'].lower()
+                
+                # Check if any keyword matches
+                if any(keyword.lower() in shortname for keyword in keywords):
+                    statement_indices[statement_type] = idx
+                    break  # Take first match
+        
+        # Check for statement types that were not found
+        for statement_type in statement_types:
+            if statement_type in statement_keywords and statement_type not in statement_indices:
+                print(f"Nothing could be found for '{statement_type}' in filing {filing.accession_number}")
+        
+        return statement_indices
 
     @staticmethod
     def clean_dataframe_header(df: pd.DataFrame) -> pd.DataFrame:
@@ -171,4 +202,31 @@ class EdgarFinancials(EdgarCompany):
             print(f"Could not retrieve Excel file. It may not exist for this filing ({filing.accession_number}). HTTP Status: {e.response.status_code}")
             return []
 
-        
+    def get_statements_by_type(self, multiple_filings, statement_types):
+        """
+        Returns a list of DataFrames for multiple filings based on statement type keywords.
+        This method dynamically finds the correct statement indices for each filing.
+
+        Args:
+            multiple_filings: List of filing objects from which to extract the financial statements.
+            statement_types (list): List of statement type keys (e.g., ['Income Statement', 'Balance Sheet']).
+
+        Returns:
+            list: List of tuples (accession_number, statement_type, sheet_name, DataFrame).
+        """
+        series_of_statements = []
+
+        for filing in multiple_filings:
+            # Find indices for this specific filing
+            statement_indices = self.find_statement_indices_by_keywords(filing, statement_types)
+            
+            excel_sheets = self.get_excel_from_filing(filing)
+
+            for statement_type, idx in statement_indices.items():
+                if idx < len(excel_sheets):
+                    sheet_name, df = excel_sheets[idx]
+                    cleaned_df = self.clean_dataframe_header(df)
+                    series_of_statements.append((filing.accession_number, statement_type, sheet_name, cleaned_df))
+
+        return series_of_statements
+
