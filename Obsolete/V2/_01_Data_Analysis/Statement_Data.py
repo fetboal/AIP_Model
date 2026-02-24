@@ -2,11 +2,12 @@ import edgar
 import pandas as pd
 import requests
 import io
+import xml.etree.ElementTree as ET
 
 # Statement keywords for dynamic matching
 statement_keywords = {
     'Income Statement': ['income'],
-    'Balance Sheet': ['balance sheet'],
+    'Balance Sheet': ['balance'],
     'Cash Flow Statement': ['cash'],
     'Equity Statement': ['equity'],
 }
@@ -202,7 +203,95 @@ class EdgarFinancials(EdgarCompany):
             print(f"Could not retrieve Excel file. It may not exist for this filing ({filing.accession_number}). HTTP Status: {e.response.status_code}")
             return []
 
+    def get_statement_html_files(self, filing, statement_types):
+        """
+        Retrieves statement HTML file names from FilingSummary.xml for requested statement types.
+
+        Args:
+            filing: The filing object.
+            statement_types (list): Statement types (e.g., Income Statement, Balance Sheet).
+
+        Returns:
+            dict: Mapping statement_type -> (short_name, html_file_name)
+        """
+        accession_number = filing.accession_number
+        cik = self.company.cik
+        accession_number_no_hyphens = accession_number.replace("-", "")
+        base_link = f"https://www.sec.gov/Archives/edgar/data/{cik}/{accession_number_no_hyphens}"
+        filing_summary_link = f"{base_link}/FilingSummary.xml"
+
+        try:
+            response = requests.get(filing_summary_link, headers=self.header)
+            response.raise_for_status()
+            root = ET.fromstring(response.content)
+        except (requests.exceptions.RequestException, ET.ParseError) as e:
+            print(f"Could not retrieve/parse FilingSummary.xml for {filing.accession_number}: {e}")
+            return {}
+
+        statement_files = {}
+        for statement_type in statement_types:
+            keywords = statement_keywords.get(statement_type, [])
+            if not keywords:
+                continue
+
+            for report in root.findall('.//Report'):
+                menu_category = report.findtext('MenuCategory', default='')
+                short_name = report.findtext('ShortName', default='')
+                html_file_name = report.findtext('HtmlFileName', default='')
+
+                if menu_category == 'Statements' and html_file_name:
+                    short_name_lower = short_name.lower()
+                    if any(keyword.lower() in short_name_lower for keyword in keywords):
+                        statement_files[statement_type] = (short_name, html_file_name)
+                        break
+
+        return statement_files
+
+    def get_statements_from_html(self, filing, statement_types):
+        """
+        Fallback statement extraction using statement HTML pages listed in FilingSummary.xml.
+
+        Args:
+            filing: The filing object.
+            statement_types (list): Statement types to extract.
+
+        Returns:
+            list: List of tuples (accession_number, statement_type, sheet_name, DataFrame).
+        """
+        accession_number = filing.accession_number
+        cik = self.company.cik
+        accession_number_no_hyphens = accession_number.replace("-", "")
+        base_link = f"https://www.sec.gov/Archives/edgar/data/{cik}/{accession_number_no_hyphens}"
+
+        statement_files = self.get_statement_html_files(filing, statement_types)
+        series_of_statements = []
+
+        for statement_type in statement_types:
+            statement_info = statement_files.get(statement_type)
+            if not statement_info:
+                continue
+
+            short_name, html_file_name = statement_info
+            statement_link = f"{base_link}/{html_file_name}"
+
+            try:
+                response = requests.get(statement_link, headers=self.header)
+                response.raise_for_status()
+                tables = pd.read_html(io.StringIO(response.text))
+                candidate_tables = [table for table in tables if table.shape[0] > 3 and table.shape[1] > 1]
+                if not candidate_tables:
+                    continue
+
+                df = max(candidate_tables, key=lambda table: (table.shape[1], table.shape[0]))
+                cleaned_df = self.clean_dataframe_header(df)
+                series_of_statements.append((accession_number, statement_type, short_name, cleaned_df))
+            except (requests.exceptions.RequestException, ValueError) as e:
+                print(f"Could not retrieve/parse HTML statement '{statement_type}' for {filing.accession_number}: {e}")
+
+        return series_of_statements
+
     def get_statements_by_type(self, multiple_filings, statement_types):
+
         """
         Returns a list of DataFrames for multiple filings based on statement type keywords.
         This method dynamically finds the correct statement indices for each filing.
@@ -221,6 +310,11 @@ class EdgarFinancials(EdgarCompany):
             statement_indices = self.find_statement_indices_by_keywords(filing, statement_types)
             
             excel_sheets = self.get_excel_from_filing(filing)
+
+            if not excel_sheets:
+                print(f"Falling back to FilingSummary HTML statements for filing {filing.accession_number}")
+                series_of_statements.extend(self.get_statements_from_html(filing, statement_types))
+                continue
 
             for statement_type, idx in statement_indices.items():
                 if idx < len(excel_sheets):

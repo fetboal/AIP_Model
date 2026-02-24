@@ -15,7 +15,7 @@ def main():
     # Replace with your email as required by the SEC for the User-Agent.
     # It's good practice to use environment variables for this.
     EMAIL_FOR_SEC = "feb2126@columbia.edu"
-    TICKER = "PPG"  # Example: PPG Industries, Inc.
+    TICKER = "PPG"  # Example: NVIDIA Corporation
 
     print(f"Initializing EDGAR financials client for {TICKER}...")
     # Create an instance of the EdgarFinancials class
