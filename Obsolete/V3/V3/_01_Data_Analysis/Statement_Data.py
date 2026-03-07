@@ -1,0 +1,491 @@
+import edgar
+import pandas as pd
+import requests
+import io
+import os
+import xml.etree.ElementTree as ET
+
+# Statement keywords for dynamic matching
+statement_keywords = {
+    'Income Statement': ['income'],
+    'Balance Sheet': ['balance'],
+    'Cash Flow Statement': ['cash'],
+    'Equity Statement': ['equity'],
+}
+
+class EdgarCompany:
+    """
+    A client to interact with the SEC EDGAR database for a specific company.
+    Handles initialization and retrieval of filings and item parts.
+    """
+    def __init__(self, email: str, ticker: str):
+        """Initializes the EdgarCompany client.
+
+        This sets the user identity required for making requests to the
+        SEC EDGAR database and then creates a Company object for the given stock ticker.
+
+        Args:
+            email (str): The email address to use as the user agent for SEC requests.
+                         This is required by the SEC to identify the user/application.
+            ticker (str): The stock ticker symbol for the desired company.
+        """
+        edgar.set_identity(email)
+        self.header = {'User-Agent': email}
+        self.company = edgar.Company(ticker)
+        self.ticker = ticker
+
+    def get_multiple_filings(self, filing_type: str, count: int):
+        """
+        Gets multiple filings of a specified type for the company. 
+
+        Count specifies how many filings to retrieve. returns a list of filing objects.
+
+        Args:
+            filing_type (str): The form type of the filings to retrieve (e.g., '10-K', '10-Q').
+            count (int): The number of filings to retrieve.
+
+        Returns:
+            list: List of filing objects corresponding to the specified type and count.
+        """
+
+        filings = self.company.get_filings(form=filing_type)
+        result = []
+        for i in range(count):
+            result.append(filings[i])
+        return result   
+
+    def get_item_by_part(self, filing_object, part: str, item: str):
+        """Retrieves a specific part of a filing.
+
+        This method extracts a specific section or item from the provided filing.
+
+        Args:
+            filing: The filing object from which to extract the part.
+            part (str): The specific part or item to retrieve from the filing
+                        (e.g., 'Item 1A. Risk Factors').
+
+        Returns:
+            A string containing the extracted part of the filing.
+        """
+        text_obj = filing_object.get_item_with_part(part=part, item=item)
+
+        #Format text with new lines
+        if callable(text_obj):
+            text = text_obj()
+        else:
+            text = str(text_obj)
+
+        return text
+
+class EdgarFinancials(EdgarCompany):
+    """
+    A class for retrieving and processing financial data from SEC EDGAR filings.
+    Inherits from EdgarCompany to access company information, filings, and item parts.
+    """
+    
+    def find_statement_indices_by_keywords(self, filing, statement_types):
+        """Find statement indices dynamically using keyword matching.
+        
+        Args:
+            filing: The filing object from which to find statements.
+            statement_types (list): List of statement type keys (e.g., ['Income Statement', 'Balance Sheet']).
+        
+        Returns:
+            dict: Dictionary mapping statement types to their indices in the filing.
+        """
+        all_reports = filing.reports
+        reports_df = all_reports.to_pandas()
+        
+        # Filter to only statements
+        statements_df = reports_df[reports_df['MenuCategory'] == 'Statements'].copy()
+        
+        statement_indices = {}
+        
+        for statement_type in statement_types:
+            if statement_type not in statement_keywords:
+                print(f"Warning: No keywords defined for '{statement_type}'")
+                continue
+                
+            keywords = statement_keywords[statement_type]
+            
+            # Search for matching statements
+            for idx, row in statements_df.iterrows():
+                shortname = row['ShortName'].lower()
+                
+                # Check if any keyword matches
+                if any(keyword.lower() in shortname for keyword in keywords):
+                    statement_indices[statement_type] = idx
+                    break  # Take first match
+        
+        # Check for statement types that were not found
+        for statement_type in statement_types:
+            if statement_type in statement_keywords and statement_type not in statement_indices:
+                print(f"Nothing could be found for '{statement_type}' in filing {filing.accession_number}")
+        
+        return statement_indices
+
+    @staticmethod
+    def clean_dataframe_header(df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Cleans the header of a DataFrame where parts of the header are in the first row.
+
+        This function is designed to handle cases where the main column headers are
+        split, with some parts in the header row and date components in the first
+        data row (often with 'Unnamed:' column placeholders).
+
+        Args:
+            df (pd.DataFrame): The input DataFrame to clean.
+
+        Returns:
+            pd.DataFrame: A new DataFrame with cleaned headers and data.
+        """
+        # Make a copy to avoid modifying the original DataFrame
+        df_copy = df.copy()
+        
+        # Condition to check if cleaning is needed: 'Unnamed:' in columns and first row has non-NaN values
+        if any('Unnamed:' in str(col) for col in df_copy.columns) and not df_copy.iloc[0].isnull().all():
+            new_headers = []
+            first_row = df_copy.iloc[0].fillna('')
+            for i, col in enumerate(df_copy.columns):
+                col_name = str(col)
+                if 'Unnamed:' in col_name:
+                    new_headers.append(str(first_row.iloc[i]))
+                else:
+                    new_headers.append(f"{col_name} {first_row.iloc[i]}".strip())
+            df_copy.columns = new_headers
+            
+            # Clean up column names
+            df_copy.columns = df_copy.columns.str.strip().str.replace(r'\s+', ' ', regex=True)
+            
+            # The first column name might have absorbed text from adjacent columns. Let's fix it.
+            # We assume the first column's true name doesn't contain a date-like string from the second column.
+            if len(df_copy.columns) > 1:
+                second_col_val = str(df.iloc[0, 1]) if pd.notna(df.iloc[0, 1]) else ''
+                if second_col_val and second_col_val in df_copy.columns[0]:
+                     df_copy.columns.values[0] = df_copy.columns[0].split(second_col_val)[0].strip()
+
+            # Drop the first row (which is now part of the header) and reset the index
+            df_copy = df_copy.iloc[1:].reset_index(drop=True)
+        
+        return df_copy
+    
+    def get_excel_from_filing(self, filing):
+        """
+        Retrieves the Excel file from a filing and returns a list of DataFrames for each sheet.
+
+        Args:
+            filing: The filing object from which to extract the Excel file.
+        
+        Returns:
+            list: List of tuples containing (sheet_name, DataFrame) for each sheet in the Excel file.
+        """
+        accession_number = filing.accession_number
+        cik = self.company.cik
+
+        accession_number_no_hyphens = accession_number.replace("-", "")
+        base_link = f"https://www.sec.gov/Archives/edgar/data/{cik}/{accession_number_no_hyphens}"
+        excel_file_link = f"{base_link}/Financial_Report.xlsx"
+
+        try:
+            response = requests.get(excel_file_link, headers=self.header)
+            response.raise_for_status()
+            
+            # Read all sheets from the Excel file in memory
+            excel_file = pd.ExcelFile(io.BytesIO(response.content))
+            
+            # Create a list of tuples with (sheet_name, dataframe)
+            dataframes = []
+            for sheet_name in excel_file.sheet_names:
+                df = pd.read_excel(excel_file, sheet_name=sheet_name)
+                dataframes.append((sheet_name, df))
+            
+            return dataframes
+        except requests.exceptions.HTTPError as e:
+            print(f"Could not retrieve Excel file. It may not exist for this filing ({filing.accession_number}). HTTP Status: {e.response.status_code}")
+            return []
+
+    def get_statement_html_files(self, filing, statement_types):
+        """
+        Retrieves statement HTML file names from FilingSummary.xml for requested statement types.
+
+        Args:
+            filing: The filing object.
+            statement_types (list): Statement types (e.g., Income Statement, Balance Sheet).
+
+        Returns:
+            dict: Mapping statement_type -> (short_name, html_file_name)
+        """
+        accession_number = filing.accession_number
+        cik = self.company.cik
+        accession_number_no_hyphens = accession_number.replace("-", "")
+        base_link = f"https://www.sec.gov/Archives/edgar/data/{cik}/{accession_number_no_hyphens}"
+        filing_summary_link = f"{base_link}/FilingSummary.xml"
+
+        try:
+            response = requests.get(filing_summary_link, headers=self.header)
+            response.raise_for_status()
+            root = ET.fromstring(response.content)
+        except (requests.exceptions.RequestException, ET.ParseError) as e:
+            print(f"Could not retrieve/parse FilingSummary.xml for {filing.accession_number}: {e}")
+            return {}
+
+        statement_files = {}
+        for statement_type in statement_types:
+            keywords = statement_keywords.get(statement_type, [])
+            if not keywords:
+                continue
+
+            for report in root.findall('.//Report'):
+                menu_category = report.findtext('MenuCategory', default='')
+                short_name = report.findtext('ShortName', default='')
+                html_file_name = report.findtext('HtmlFileName', default='')
+
+                if menu_category == 'Statements' and html_file_name:
+                    short_name_lower = short_name.lower()
+                    if any(keyword.lower() in short_name_lower for keyword in keywords):
+                        statement_files[statement_type] = (short_name, html_file_name)
+                        break
+
+        return statement_files
+
+    def get_statements_from_html(self, filing, statement_types):
+        """
+        Fallback statement extraction using statement HTML pages listed in FilingSummary.xml.
+
+        Args:
+            filing: The filing object.
+            statement_types (list): Statement types to extract.
+
+        Returns:
+            list: List of tuples (accession_number, statement_type, sheet_name, DataFrame).
+        """
+        accession_number = filing.accession_number
+        cik = self.company.cik
+        accession_number_no_hyphens = accession_number.replace("-", "")
+        base_link = f"https://www.sec.gov/Archives/edgar/data/{cik}/{accession_number_no_hyphens}"
+
+        statement_files = self.get_statement_html_files(filing, statement_types)
+        series_of_statements = []
+
+        for statement_type in statement_types:
+            statement_info = statement_files.get(statement_type)
+            if not statement_info:
+                continue
+
+            short_name, html_file_name = statement_info
+            statement_link = f"{base_link}/{html_file_name}"
+
+            try:
+                response = requests.get(statement_link, headers=self.header)
+                response.raise_for_status()
+                tables = pd.read_html(io.StringIO(response.text))
+                candidate_tables = [table for table in tables if table.shape[0] > 3 and table.shape[1] > 1]
+                if not candidate_tables:
+                    continue
+
+                df = max(candidate_tables, key=lambda table: (table.shape[1], table.shape[0]))
+                cleaned_df = self.clean_dataframe_header(df)
+                series_of_statements.append((accession_number, statement_type, short_name, cleaned_df))
+            except (requests.exceptions.RequestException, ValueError) as e:
+                print(f"Could not retrieve/parse HTML statement '{statement_type}' for {filing.accession_number}: {e}")
+
+        return series_of_statements
+
+    def get_statements_by_type(self, multiple_filings, statement_types):
+
+        """
+        Returns a list of DataFrames for multiple filings based on statement type keywords.
+        This method dynamically finds the correct statement indices for each filing.
+
+        Args:
+            multiple_filings: List of filing objects from which to extract the financial statements.
+            statement_types (list): List of statement type keys (e.g., ['Income Statement', 'Balance Sheet']).
+
+        Returns:
+            list: List of tuples (accession_number, statement_type, sheet_name, DataFrame).
+        """
+        series_of_statements = []
+
+        for filing in multiple_filings:
+            # Find indices for this specific filing
+            statement_indices = self.find_statement_indices_by_keywords(filing, statement_types)
+            
+            excel_sheets = self.get_excel_from_filing(filing)
+
+            if not excel_sheets:
+                print(f"Falling back to FilingSummary HTML statements for filing {filing.accession_number}")
+                series_of_statements.extend(self.get_statements_from_html(filing, statement_types))
+                continue
+
+            for statement_type, idx in statement_indices.items():
+                if idx < len(excel_sheets):
+                    sheet_name, df = excel_sheets[idx]
+                    cleaned_df = self.clean_dataframe_header(df)
+                    series_of_statements.append((filing.accession_number, statement_type, sheet_name, cleaned_df))
+
+        return series_of_statements
+
+    def combine_dataframes(self, statements):
+        '''
+        Combines mulitple DataFrames into a single DataFrame. The function should return one data frame for each 
+        statement type. The columns should overlap on the taking the value from the most recent filing.
+        E.g if we have 2 10-K filings take the 3 years from the most recent and then add the years from the older one that are not in the most recent.
+        
+        Args:
+            statements: List of tuples (accession_number, statement_type, sheet_name, DataFrame)
+            
+        Returns:
+            tuple: Three DataFrames (balance_sheet, cash_flow, income_statement), each with unique year columns.
+        '''
+        
+        def flatten_columns(df):
+            """Flatten multi-level column indices to single level."""
+            df_copy = df.copy()
+            if isinstance(df_copy.columns, pd.MultiIndex):
+                # Join multi-level columns into single strings
+                df_copy.columns = [' '.join(map(str, col)).strip() if isinstance(col, tuple) else str(col) 
+                                   for col in df_copy.columns]
+            return df_copy
+        
+        def extract_year(col_name):
+            """Extract year from column name (e.g., 'Dec. 31, 2023' or '12 Months Ended Dec. 31, 2023' -> '2023')."""
+            import re
+            col_str = str(col_name)
+            # Look for 4-digit year
+            match = re.search(r'\b(20\d{2})\b', col_str)
+            if match:
+                return match.group(1)
+            return col_str
+        
+        def merge_statement_dataframes(statement_dfs):
+            """Helper function to merge dataframes for a single statement type."""
+            if not statement_dfs:
+                return pd.DataFrame()
+            
+            # Sort by accession number (most recent first - they sort alphabetically in reverse)
+            statement_dfs.sort(key=lambda x: x[0], reverse=True)
+            
+            all_dataframes = []
+            existing_years = set()
+            
+            for accession_number, _, _, df in statement_dfs:
+                df_copy = flatten_columns(df).copy()
+                
+                # Set first column as index (line item names)
+                if len(df_copy.columns) > 0:
+                    df_copy = df_copy.set_index(df_copy.columns[0])
+                    
+                    # Remove duplicate index rows within this dataframe (keep first)
+                    df_copy = df_copy[~df_copy.index.duplicated(keep='first')]
+                    
+                    # Normalize column names to years
+                    year_columns = {}
+                    for col in df_copy.columns:
+                        year = extract_year(col)
+                        # Only add years we haven't seen yet
+                        if year not in existing_years:
+                            year_columns[col] = year
+                            existing_years.add(year)
+                    
+                    # Keep only new year columns and rename them
+                    if year_columns:
+                        df_filtered = df_copy[[col for col in year_columns.keys()]].copy()
+                        df_filtered.rename(columns=year_columns, inplace=True)
+                        all_dataframes.append(df_filtered)
+            
+            # Concatenate all dataframes horizontally with outer join to include all line items
+            if all_dataframes:
+                result_df = pd.concat(all_dataframes, axis=1, join='outer')
+                
+                # Sort columns by year in descending order
+                year_cols = sorted([col for col in result_df.columns], reverse=True)
+                result_df = result_df[year_cols]
+                
+                return result_df
+            
+            return pd.DataFrame()
+        
+        # Group statements by type
+        balance_sheets = []
+        cash_flows = []
+        income_statements = []
+        
+        for accession_number, statement_type, sheet_name, df in statements:
+            if statement_type == 'Balance Sheet':
+                balance_sheets.append((accession_number, statement_type, sheet_name, df))
+            elif statement_type == 'Cash Flow Statement':
+                cash_flows.append((accession_number, statement_type, sheet_name, df))
+            elif statement_type == 'Income Statement':
+                income_statements.append((accession_number, statement_type, sheet_name, df))
+        
+        # Merge dataframes for each statement type
+        balance_sheet_df = merge_statement_dataframes(balance_sheets)
+        cash_flow_df = merge_statement_dataframes(cash_flows)
+        income_statement_df = merge_statement_dataframes(income_statements)
+        
+        return balance_sheet_df, cash_flow_df, income_statement_df
+        
+        # Group statements by type
+        balance_sheets = []
+        cash_flows = []
+        income_statements = []
+        
+        for accession_number, statement_type, sheet_name, df in statements:
+            if statement_type == 'Balance Sheet':
+                balance_sheets.append((accession_number, statement_type, sheet_name, df))
+            elif statement_type == 'Cash Flow Statement':
+                cash_flows.append((accession_number, statement_type, sheet_name, df))
+            elif statement_type == 'Income Statement':
+                income_statements.append((accession_number, statement_type, sheet_name, df))
+        
+        # Merge dataframes for each statement type
+        balance_sheet_df = merge_statement_dataframes(balance_sheets)
+        cash_flow_df = merge_statement_dataframes(cash_flows)
+        income_statement_df = merge_statement_dataframes(income_statements)
+        
+        return balance_sheet_df, cash_flow_df, income_statement_df
+
+    def export_dataframes_to_csv(self, balance_sheet_df, cash_flow_df, income_statement_df, ticker, output_folder='_03_Outputs'):
+        """
+        Export financial statements to CSV files in the specified output folder.
+        
+        Args:
+            balance_sheet_df: DataFrame for the balance sheet
+            cash_flow_df: DataFrame for the cash flow statement
+            income_statement_df: DataFrame for the income statement
+            ticker (str): Stock ticker symbol
+            output_folder (str): Path to output folder relative to V3 directory (default: '_03_Outputs')
+        
+        Returns:
+            list: List of file paths that were created
+        """
+        # Get the V3 directory path (parent of _01_Data_Analysis)
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        v3_dir = os.path.dirname(current_dir)
+        output_path = os.path.join(v3_dir, output_folder)
+        
+        # Create output folder if it doesn't exist
+        os.makedirs(output_path, exist_ok=True)
+        
+        created_files = []
+        
+        # Dictionary mapping statement names to DataFrames
+        statements_dict = {
+            'Balance_Sheet': balance_sheet_df,
+            'Cash_Flow_Statement': cash_flow_df,
+            'Income_Statement': income_statement_df
+        }
+        
+        # Export each DataFrame to CSV
+        for statement_name, df in statements_dict.items():
+            if not df.empty:
+                filename = f"{ticker}_{statement_name}.csv"
+                filepath = os.path.join(output_path, filename)
+                
+                # Export to CSV
+                df.to_csv(filepath, index=True)
+                created_files.append(filepath)
+                print(f"Exported: {filename}")
+        
+        print(f"\nAll {len(created_files)} files exported to: {output_path}")
+        return created_files
